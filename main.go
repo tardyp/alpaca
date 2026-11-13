@@ -60,6 +60,8 @@ func main() {
 	pacurl := flag.String("C", "", "url of proxy auto-config (pac) file")
 	domain := flag.String("d", "", "domain of the proxy account (for NTLM auth)")
 	username := flag.String("u", whoAmI(), "username for proxy auth (NTLM)")
+	basicKeychain := flag.String("basic-keychain", "",
+		"keyring service holding the Basic proxy password for -u (e.g. rnproxy)")
 	printHash := flag.Bool("H", false, "print hashed NTLM credentials for non-interactive use")
 	noKerberos := flag.Bool("no-kerberos", false,
 		"disable Kerberos/Negotiate auto-detection (macOS only)")
@@ -90,6 +92,17 @@ func main() {
 	if value := os.Getenv("BASIC_CREDENTIALS"); value != "" {
 		basicAuth = newBasicAuthenticator(value)
 		log.Println("Basic proxy authentication configured from BASIC_CREDENTIALS")
+		if *basicKeychain != "" {
+			log.Println("BASIC_CREDENTIALS set; ignoring -basic-keychain")
+		}
+	} else if *basicKeychain != "" {
+		b, err := basicFromKeyring(*basicKeychain, *username, terminalPasswordPrompt(*username))
+		if err != nil {
+			log.Printf("Basic credentials not available: %v", err)
+		} else {
+			basicAuth = b
+			log.Printf("Basic proxy authentication configured from keyring service %q for %s", *basicKeychain, *username)
+		}
 	}
 
 	// NTLM credential sources

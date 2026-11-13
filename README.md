@@ -269,6 +269,7 @@ can set this manually using the `-C` flag.
 | `-C` | (none) | URL of proxy auto-config (PAC) file |
 | `-d` | (none) | Domain of the proxy account (for NTLM auth) |
 | `-u` | current user | Username for proxy auth (NTLM) |
+| `-basic-keychain` | none | Keyring service holding the Basic proxy password for `-u` (e.g. `rnproxy`); deleted on 407 |
 | `-H` | `false` | Print hashed NTLM credentials and exit |
 | `-no-kerberos` | `false` | Disable Kerberos / Negotiate auto-detection (macOS only) |
 | `-enable-socks` | `false` | Allow SOCKS5 proxies from PAC files. SOCKS5 has its own auth model and bypasses alpaca's HTTP authentication chain (and therefore the proxy-auth allowlist). |

@@ -17,10 +17,13 @@ package main
 import (
 	"encoding/base64"
 	"net/http"
+	"sync/atomic"
 )
 
 type basicAuthenticator struct {
-	encoded string
+	encoded  string
+	onReject func()
+	rejected atomic.Bool
 }
 
 func newBasicAuthenticator(credentials string) *basicAuthenticator {
@@ -31,10 +34,16 @@ func newBasicAuthenticator(credentials string) *basicAuthenticator {
 
 func (b *basicAuthenticator) scheme() string { return "Basic" }
 
-// applicableTo always returns true: Basic has no host policy.
-func (b *basicAuthenticator) applicableTo(string) bool { return true }
+// applicableTo has no host policy, but declines once the stored credential
+// has been rejected by the proxy (407).
+func (b *basicAuthenticator) applicableTo(string) bool { return !b.rejected.Load() }
 
 func (b *basicAuthenticator) do(req *http.Request, rt http.RoundTripper) (*http.Response, error) {
 	req.Header.Set("Proxy-Authorization", "Basic "+b.encoded)
-	return rt.RoundTrip(req)
+	resp, err := rt.RoundTrip(req)
+	if err == nil && resp.StatusCode == http.StatusProxyAuthRequired &&
+		b.onReject != nil && b.rejected.CompareAndSwap(false, true) {
+		b.onReject()
+	}
+	return resp, err
 }
