@@ -22,7 +22,9 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -104,6 +106,53 @@ func TestDownloadWithNetworkChanges(t *testing.T) {
 	pf.pacFinder = newPacFinder(s2.URL)
 	assert.Equal(t, []byte("test script 2"), pf.download())
 	assert.True(t, pf.isConnected())
+}
+
+func TestDownloadRetriesWhileDisconnected(t *testing.T) {
+	// The first download fails, so the fetcher stays disconnected. A later
+	// download with no network change and the same PAC URL must still retry
+	// once the interval has elapsed, so a PAC server that was unreachable at
+	// startup is picked up when it comes back.
+	var up atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !up.Load() {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write([]byte("test script"))
+	}))
+	defer server.Close()
+
+	defer func(old time.Duration) { retryIntervalAfterFailure = old }(retryIntervalAfterFailure)
+
+	pf := newPACFetcher(server.URL)
+	pf.monitor = &fakeNetMonitor{}
+	assert.Nil(t, pf.download())
+	assert.False(t, pf.isConnected())
+
+	// Still down, and the interval has not elapsed: no refetch attempt.
+	retryIntervalAfterFailure = time.Hour
+	assert.Nil(t, pf.download())
+	assert.False(t, pf.isConnected())
+
+	// Server is back; the retry interval has elapsed; no network change.
+	up.Store(true)
+	retryIntervalAfterFailure = 0
+	assert.Equal(t, []byte("test script"), pf.download())
+	assert.True(t, pf.isConnected())
+
+	// Connected: no refetch without a change.
+	assert.Nil(t, pf.download())
+}
+
+func TestDownloadDoesNotRetryWhileConnected(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(pacjsHandler("test script")))
+	defer server.Close()
+	pf := newPACFetcher(server.URL)
+	pf.monitor = &fakeNetMonitor{}
+	assert.Equal(t, []byte("test script"), pf.download())
+	// A connected fetcher must not refetch without a network or PAC URL change.
+	assert.Nil(t, pf.download())
 }
 
 func TestResponseLimit(t *testing.T) {

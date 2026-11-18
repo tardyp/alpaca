@@ -39,11 +39,17 @@ const maxDataURLLength = 512 * 1024 * 1024
 // https://cs.chromium.org/chromium/src/net/proxy_resolution/proxy_resolution_service.cc?l=96&rcl=3db5f65968c3ecab3932c1ff7367ad28834f9502
 var delayAfterFailedDownload = 2 * time.Second
 
+// A failed PAC download used to be retried only after a network change, so a
+// PAC server that is briefly unreachable at startup can leave alpaca
+// disconnected indefinitely. While disconnected, retry at this interval.
+var retryIntervalAfterFailure = 60 * time.Second
+
 type pacFetcher struct {
-	pacFinder *pacFinder
-	monitor   netMonitor
-	client    *http.Client
-	connected bool
+	pacFinder   *pacFinder
+	monitor     netMonitor
+	client      *http.Client
+	lastAttempt time.Time
+	connected   bool
 	//cache  []byte
 	//modified time.Time
 	//fetched time.Time
@@ -129,9 +135,16 @@ func decodeDataURL(uri string) ([]byte, error) {
 func (pf *pacFetcher) download() []byte {
 	// TODO: Combine pacChanged() and findPACURL() as described in
 	// https://github.com/samuong/alpaca/pull/156#issuecomment-3125070335
-	if !pf.monitor.addrsChanged() && !pf.pacFinder.pacChanged() {
-		return nil
+	changed := pf.monitor.addrsChanged()
+	if !pf.pacFinder.pacChanged() && !changed {
+		// Without a network change, only a disconnected fetcher retries, and
+		// only once per retryIntervalAfterFailure, so that a PAC server that
+		// was unreachable at startup is picked up as soon as it comes back.
+		if pf.connected || time.Since(pf.lastAttempt) < retryIntervalAfterFailure {
+			return nil
+		}
 	}
+	pf.lastAttempt = time.Now()
 	pf.connected = false
 
 	// We've just detected a change in network state, so close any "idle"
